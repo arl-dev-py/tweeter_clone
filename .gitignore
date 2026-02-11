@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.env
+.venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Docker
+.dockerignore
+
+# Logs/DB
+*.log
+*.sqlite3
+
+# Tests
+.pytest_cache/
+htmlcov/
+.coverage
+
+# OS generated
+.DS_Store
+Thumbs.db

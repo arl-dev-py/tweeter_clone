@@ -18,6 +18,7 @@ app.include_router(users.router, dependencies=[Depends(api_key_auth)])
 app.include_router(tweets.router, dependencies=[Depends(api_key_auth)])
 app.include_router(medias.router, dependencies=[Depends(api_key_auth)])
 
+
 @app.get("/")
 async def root():
     return {"message": "Microblog API running"}

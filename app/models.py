@@ -15,6 +15,18 @@ class User(Base, AsyncAttrs):
         nullable=False
     )
     tweets: Mapped[list["Tweet"]] = relationship(back_populates="user")
+    followers: Mapped[list["Follower"]] = relationship(
+        "Follower",
+        foreign_keys="Follower.following_id",
+        back_populates="follower"
+    )
+    following: Mapped[list["Follower"]] = relationship(
+        "Follower",
+        foreign_keys="Follower.follower_id",
+        back_populates="following"
+    )
+    followers_count: Mapped[int] = mapped_column(Integer, default=0)
+    following_count: Mapped[int] = mapped_column(Integer, default=0)
 
 class Tweet(Base, AsyncAttrs):
     __tablename__ = "tweets"
@@ -41,3 +53,31 @@ class Media(Base, AsyncAttrs):
         nullable=False
     )
     tweet: Mapped["Tweet"] = relationship(back_populates="medias")
+
+
+class Follower(Base, AsyncAttrs):
+    __tablename__ = "followers"
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    follower_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    following_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(),
+        nullable=False
+    )
+
+    follower: Mapped["User"] = relationship(
+        "User",
+        foreign_keys=[follower_id],
+        back_populates="following"
+    )
+    following: Mapped["User"] = relationship(
+        "User",
+        foreign_keys=[following_id],
+        back_populates="followers"
+    )
+
+
+
+
+

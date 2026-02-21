@@ -1,91 +1,111 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-from pydantic import BaseModel
-from app.models import User, Follower
+from typing import List
 from db.engine import get_async_session
+from db.models import User, Follower
+from app.middleware import api_key_auth
+from pydantic import BaseModel, ConfigDict
 from datetime import datetime
-from typing import List, Any
+import uuid
 
-router = APIRouter(prefix="/api/v1/users", tags=["users"])
-
-
-class UserCreate(BaseModel):
-    username: str
+router = APIRouter(prefix="/users", tags=["users"])
 
 
-class UserOut(BaseModel):
+class UserResponse(BaseModel):
     id: int
     username: str
     created_at: datetime
-    followers_count: int
-    following_count: int
-    model_config = {"from_attributes": True}
+    api_key: str
+
+    model_config = ConfigDict(from_attributes=True)
 
 
-class UserMeOut(BaseModel):
-    id: int
-    username: str
-    created_at: datetime
-    followers_count: int
-    following_count: int
-    tweets: List[Any]
-    model_config = {"from_attributes": True}
+async def get_current_user(user: User = Depends(api_key_auth)):
+    return user
 
 
 class UserPublicOut(BaseModel):
     id: int
     username: str
-    created_at: datetime
-    followers_count: int
-    following_count: int
-    model_config = {"from_attributes": True}
+    followers: List[dict]
+    following: List[dict]
 
 
-@router.get("/", response_model=list[UserOut])
-async def get_users(session: AsyncSession = Depends(get_async_session)):
-    result = await session.execute(select(User))
-    return result.scalars().all()
+@router.get("/me", response_model=dict)
+async def get_me(user: User = Depends(get_current_user)):
+    return {
+        "result": True,
+        "user": {
+            "id": user.id,
+            "name": user.username,
+            "followers": [],
+            "following": [],
+        },
+    }
 
 
-@router.post("/", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-async def create_user(user_in: UserCreate, session: AsyncSession = Depends(get_async_session)):
-    result = await session.execute(select(User).where(User.username == user_in.username))
-    if result.scalar_one_or_none():
-        raise HTTPException(status.HTTP_409_CONFLICT, "Username exists")
-    user = User(username=user_in.username)
-    session.add(user)
-    await session.commit()
-    await session.refresh(user)
-    return user
+@router.get("/{user_id}")
+async def get_user_profile(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    stmt = (
+        select(User)
+        .options(selectinload(User.followers), selectinload(User.following))
+        .where(User.id == user_id)
+    )
+    result = await session.execute(stmt)
+    target_user = result.scalar_one_or_none()
+
+    if not target_user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+
+    followers = [
+        {"id": f.follower.id, "name": f.follower.username}
+        for f in target_user.followers
+    ]
+    following = [
+        {"id": f.following.id, "name": f.following.username}
+        for f in target_user.following
+    ]
+
+    return {
+        "result": True,
+        "user": {
+            "id": target_user.id,
+            "name": target_user.username,
+            "followers": followers,
+            "following": following,
+        },
+    }
 
 
 @router.post("/{user_id}/follow", status_code=status.HTTP_200_OK)
 async def follow_user(
-        user_id: int,
-        session: AsyncSession = Depends(get_async_session)
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
 ):
-    follower_id = 5
+    target_user = await session.get(User, user_id)
+    if not target_user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
 
     exists = await session.execute(
         select(Follower).where(
-            Follower.follower_id == follower_id,
-            Follower.following_id == user_id
+            Follower.follower_id == current_user.id, Follower.following_id == user_id
         )
     )
     if exists.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Already following")
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Already following")
 
-    follow = Follower(follower_id=follower_id, following_id=user_id)
+    follow = Follower(follower_id=current_user.id, following_id=user_id)
     session.add(follow)
 
-    await session.execute(
-        update(User).where(User.id == follower_id).values(following_count=User.following_count + 1)
-    )
-    await session.execute(
-        update(User).where(User.id == user_id).values(followers_count=User.followers_count + 1)
-    )
+    current_user.following_count += 1
+    target_user.followers_count += 1
 
     await session.commit()
     return {"result": True}
@@ -93,52 +113,72 @@ async def follow_user(
 
 @router.delete("/{user_id}/follow", status_code=status.HTTP_200_OK)
 async def unfollow_user(
-        user_id: int,
-        session: AsyncSession = Depends(get_async_session)
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
 ):
-    follower_id = 5
+    target_user = await session.get(User, user_id)
+    if not target_user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
 
-    result = await session.execute(
-        select(Follower).where(
-            Follower.follower_id == follower_id,
-            Follower.following_id == user_id
-        )
+    follow_stmt = select(Follower).where(
+        Follower.follower_id == current_user.id, Follower.following_id == user_id
     )
+    result = await session.execute(follow_stmt)
     follow = result.scalar_one_or_none()
-    if not follow:
-        raise HTTPException(status_code=404, detail="Not following")
 
-    await session.execute(
-        update(User).where(User.id == follower_id).values(following_count=User.following_count - 1)
-    )
-    await session.execute(
-        update(User).where(User.id == user_id).values(followers_count=User.followers_count - 1)
-    )
+    if not follow:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Not following")
 
     await session.delete(follow)
+
+    current_user.following_count = max(0, current_user.following_count - 1)
+    target_user.followers_count = max(0, target_user.followers_count - 1)
+
     await session.commit()
     return {"result": True}
 
 
-@router.get("/me", response_model=UserMeOut)
-async def get_me(session: AsyncSession = Depends(get_async_session)):
-    user_id = 4
-    stmt = select(User).options(selectinload(User.tweets)).where(User.id == user_id)
-    result = await session.execute(stmt)
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+@router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    username: str, session: AsyncSession = Depends(get_async_session)
+):
+    result = await session.execute(select(User).where(User.username == username))
+    if result.scalar_one_or_none():
+        raise HTTPException(status.HTTP_409_CONFLICT, "Username exists")
+
+    api_key = f"test-api-key-{uuid.uuid4().hex}"[:20]
+    user = User(username=username, api_key=api_key)
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
     return user
 
 
-@router.get("/{user_id}", response_model=UserPublicOut)
-async def get_user(user_id: int, session: AsyncSession = Depends(get_async_session)):
-    stmt = select(User).options(
-        selectinload(User.followers),
-        selectinload(User.following)
-    ).where(User.id == user_id)
-    result = await session.execute(stmt)
-    user = result.scalar_one_or_none()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+@router.post("/superuser", status_code=status.HTTP_201_CREATED)
+async def create_superuser(
+    username: str, session: AsyncSession = Depends(get_async_session)
+):
+    api_key = "test-api-key"
+
+    result = await session.execute(select(User).where(User.api_key == api_key))
+    if result.scalar_one_or_none():
+        return {"result": True, "message": "Superuser already exists with test-api-key"}
+
+    result = await session.execute(select(User).where(User.username == username))
+    existing_user = result.scalar_one_or_none()
+
+    if existing_user:
+        existing_user.api_key = api_key
+        await session.commit()
+        return {
+            "result": True,
+            "message": f"Superuser {username} updated",
+            "api_key": api_key,
+        }
+    else:
+        user = User(username=username, api_key=api_key)
+        session.add(user)
+        await session.commit()
+        await session.refresh(user)
+        return {"result": True, "user_id": user.id, "api_key": api_key}

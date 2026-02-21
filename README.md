@@ -1,39 +1,52 @@
 # TweeterClone API
 
-FastAPI Twitter-клон. 90% test coverage.
+Корпоративный Twitter-клон.
 
-## Запуск
+## Запуск (1 команда)
+
 git clone https://github.com/arl-dev-py/TweeterClone.git
 cd TweeterClone
-docker-compose up -d
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+mkdir -p media
+docker-compose up -d --build
 
-Docs: http://localhost:8000/docs
+Swagger: http://localhost:8000/docs  
+БД: localhost:5432 (user/password)
 
-## Auth
-Bearer test-api-key
+## Демо (api-key: test-api-key)
 
-## API
-POST /api/v1/users/ {"username": "test"} → user_id=3
+# 1. Создать суперюзера
+curl -X POST http://localhost:8000/api/users/superuser \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin"}'
 
-POST /api/v1/medias/ file=img.jpg tweet_id=3 → media_id=17
+# 2. Создать твит
+curl -X POST http://localhost:8000/api/tweets \
+  -H "api-key: test-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"tweet_data": "Привет из микроблога!", "tweet_media_ids": []}'
 
-POST /api/v1/tweets/ 
-{
-  "text": "Твит с фото!", 
-  "user_id": 3, 
-  "media_ids": [17]
-} → tweet_id=7
+## API эндпоинты
 
-GET /api/v1/tweets/7 → твит + картинки + likes
+POST    /api/tweets                    Новый твит {tweet_data, tweet_media_ids[]}
+POST    /api/medias                    Загрузить картинку (form file)
+DELETE  /api/tweets/{id}               Удалить свой твит
+POST    /api/tweets/{id}/likes         Поставить лайк
+DELETE  /api/tweets/{id}/likes         Убрать лайк
+POST    /api/users/{id}/follow         Подписаться
+DELETE  /api/users/{id}/follow         Отписаться
+GET     /api/tweets                    Лента (following, сортировка по популярности)
+GET     /api/users/me                  Мой профиль {followers, following}
+GET     /api/users/{id}                Профиль пользователя
 
-POST /api/v1/tweets/7/likes → {"likes_count": 2}
+Авторизация: Header `api-key: test-api-key`
 
-Картинка: /media/img.jpg
+## Команды разработки
 
-## Тесты
-pytest --cov=app/routers --cov-report=term  # 90%
+# Логи
+docker-compose logs -f api
 
-## Стек
-FastAPI + SQLAlchemy async + PostgreSQL + pytest
+# Очистка
+docker-compose down -v
+
+# Тесты
+pytest tests/ --cov=app/routers --cov-report=term

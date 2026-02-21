@@ -1,41 +1,56 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, status, UploadFile, File, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from pydantic import BaseModel
-from datetime import datetime
-from app.models import Media, Tweet
+from typing import List
 from db.engine import get_async_session
-from fastapi import UploadFile, File, Form
+from db.models import Media, User
+from app.middleware import api_key_auth
+import os
+import uuid
+from datetime import datetime
+from fastapi.responses import FileResponse
 
-router = APIRouter(prefix="/api/v1/medias", tags=["medias"])
-
-class MediaCreate(BaseModel):
-    url: str
-    tweet_id: int
-
-class MediaOut(BaseModel):
-    model_config = {"from_attributes": True}
-    id: int
-    url: str
-    tweet_id: int | None = None
-    created_at: datetime
-
-@router.get("/", response_model=list[MediaOut])
-async def get_medias(session: AsyncSession = Depends(get_async_session)):
-    result = await session.execute(select(Media))
-    return result.scalars().all()
+router = APIRouter(prefix="/medias", tags=["medias"])
 
 
-@router.post("/", response_model=MediaOut, status_code=status.HTTP_201_CREATED)
+async def get_current_user(user: User = Depends(api_key_auth)):
+    return user
+
+
+@router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_media(
     file: UploadFile = File(...),
-    tweet_id: int = Form(0),
-    session: AsyncSession = Depends(get_async_session)
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
 ):
-    # contents = await file.read()
-    media = Media(url=f"/media/{file.filename}", tweet_id=tweet_id)
-    session.add(media)
-    await session.commit()
-    await session.refresh(media)
-    return media
+    os.makedirs("media", exist_ok=True)
+    file_extension = file.filename.split(".")[-1]
+    filename = f"{uuid.uuid4()}.{file_extension}"
+    file_path = f"media/{filename}"
 
+    content = await file.read()
+    with open(file_path, "wb") as buffer:
+        buffer.write(content)
+
+    media = Media(url=f"/medias/{filename}")
+    session.add(media)
+    await session.flush()
+    return {"result": True, "media_id": media.id}
+
+
+@router.get("/", status_code=status.HTTP_200_OK)
+async def get_medias(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    result = await session.execute(select(Media).where(Media.tweet_id.is_(None)))
+    medias = result.scalars().all()
+    return {"result": True, "medias": [{"id": m.id, "url": m.url} for m in medias]}
+
+
+@router.get("/{filename:path}")
+async def get_media_file(filename: str):
+    file_path = f"media/{filename}"
+    if os.path.exists(file_path):
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Media not found")

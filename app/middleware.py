@@ -1,4 +1,3 @@
-# app/middleware.py — ОСТАВЬ ТАК!
 from fastapi import Header, Depends, HTTPException
 from fastapi.security import APIKeyHeader
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,5 +15,5 @@ async def api_key_auth(
     result = await session.execute(select(User).where(User.api_key == api_key))
     user = result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid API key")
+        raise HTTPException(401, "Invalid API key")
     return user

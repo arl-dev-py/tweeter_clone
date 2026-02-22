@@ -159,7 +159,7 @@ async def create_user(
 async def create_superuser(
     username: str, session: AsyncSession = Depends(get_async_session)
 ):
-    api_key = "test-api-key"
+    api_key = "test"
 
     result = await session.execute(select(User).where(User.api_key == api_key))
     if result.scalar_one_or_none():
